@@ -3,16 +3,11 @@ import torch
 from torch import nn
 import utils.complex_utils as cplx
 from utils.transforms import SenseModel,SenseModel_single
-
 from models.SAmodel import MyNetwork
-#from image_fusion import fuse
-import numpy as np
 import os
-from recon_net_wrap import ViTfuser
+from recon_net_wrap_reg import ViT
 from vision_transformer import VisionTransformer
 
-#### End new try
-# matplotlib.use('TkAgg')
 
 class Operator(torch.nn.Module):
     def __init__(self, A):
@@ -29,9 +24,9 @@ class Operator(torch.nn.Module):
         out = self.adjoint(self.forward(x))
         return out
 
-class UnrolledViT(nn.Module):
+class UnrolledViTreg(nn.Module):
     """
-    PyTorch implementation of ViT-Fuser.
+    PyTorch implementation of  ViT with no unrolles.
     """
 
     def __init__(self, params):
@@ -48,7 +43,7 @@ class UnrolledViT(nn.Module):
         self.modl_lamda = params.modl_lamda
         self.reference_mode = params.reference_mode
         self.reference_lambda = params.reference_lambda
-        self.device = 'cuda:0'
+        self.device = 'cuda:2'
 
         net = VisionTransformer(
         avrg_img_size=320,
@@ -60,18 +55,14 @@ class UnrolledViT(nn.Module):
         )
 
         self.resnets = nn.ModuleList([MyNetwork(2,2)] * self.num_grad_steps)
-        self.similaritynets = nn.ModuleList([ViTfuser(net)] * self.num_grad_steps)
+        self.similaritynets = nn.ModuleList([ViT(net)] * self.num_grad_steps)
+
 
         # intialize for training
         #checkpoint_file = "./lsdir-2x+hq50k_vit_epoch_60.pt"
         #checkpoint = torch.load(checkpoint_file,map_location=self.device)
         #for net in self.similaritynets:
         #    net.recon_net.load_state_dict(checkpoint['model'])
-    def freezer():
-        for net in self.similaritynets:
-            net.recon_net.net.forward_features.requires_grad_(False)
-            net.recon_net.net.head.requires_grad_(False)
-        
 
     def forward(self, kspace, reference_image,init_image=None, mask=None):
         """
@@ -111,12 +102,13 @@ class UnrolledViT(nn.Module):
         # Begin unrolled proximal gradient descent
         iter = 1
         for resnet, similaritynet in zip(self.resnets, self.similaritynets):
+            #print(image.shape)
+            # Combine the output of ResNet with the reference image
 
             image = image.permute(0,3,1,2)
- 
+   
             real_part = image[:,0,:,:].unsqueeze(1)
             imag_part = image[:,1,:,:].unsqueeze(1)
-
 
             phase = torch.atan2(real_part,imag_part)
             mag_image = torch.sqrt(real_part**2 + imag_part**2)
@@ -126,10 +118,9 @@ class UnrolledViT(nn.Module):
             image = torch.cat((refined_image*torch.cos(phase),refined_image*torch.sin(phase)),dim=1)
 
             # ADD for training, remove otherwise !
-            image = refined_image
+            #image = refined_image
 
             image = image.permute(0, 2, 3, 1) # Permute back to original shape
-
 
             iter = iter +1
 
